@@ -12,7 +12,7 @@ export interface Listing {
   size: string;
 }
 
-// --- Cheerio parsing (shared by both fetch and browser approaches) ---
+// --- Cheerio parsing ---
 
 function parseListings(html: string): Listing[] {
   if (!html.includes("EntityList-item")) {
@@ -62,48 +62,7 @@ function parseListings(html: string): Listing[] {
   return listings;
 }
 
-// --- Fast fetch() approach (used by cron on Vercel) ---
-
-const USER_AGENTS = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-];
-
-/** Scrape page 1 via fetch() — fast, used by cron. Returns [] if blocked. */
-export async function scrapeFast(searchUrl: string): Promise<Listing[]> {
-  const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-
-  const response = await fetch(searchUrl, {
-    headers: {
-      "User-Agent": ua,
-      "Accept-Language": "hr-HR,hr;q=0.9,en;q=0.8",
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-    redirect: "follow",
-  });
-
-  if (!response.ok) {
-    console.error(`[scraper] HTTP ${response.status} for ${searchUrl}`);
-    return [];
-  }
-
-  // Bot protection redirects to perfdrive — just return empty, try again next cycle
-  if (response.url.includes("validate.perfdrive.com")) {
-    console.warn(`[scraper] Bot protection hit for ${searchUrl} — skipping this cycle`);
-    return [];
-  }
-
-  const html = await response.text();
-  const listings = parseListings(html);
-  console.log(`[scraper] Fast scrape: ${listings.length} listings from ${searchUrl}`);
-  return listings;
-}
-
-// --- Headless browser approach (used by local seed mode only) ---
+// --- Headless browser ---
 
 const CHROMIUM_PACK_URL =
   "https://github.com/Sparticuz/chromium/releases/download/v143.0.4/chromium-v143.0.4-pack.x64.tar";
@@ -158,6 +117,25 @@ function addPageParam(baseUrl: string, pageNum: number): string {
   const url = new URL(baseUrl);
   url.searchParams.set("page", String(pageNum));
   return url.toString();
+}
+
+// --- Exported functions ---
+
+/** Scrape page 1 with headless browser — used by Inngest steps */
+export async function scrapeSingleTarget(searchUrl: string): Promise<Listing[]> {
+  const browser = await launchBrowser();
+  try {
+    const page = await setupPage(browser);
+    const { html } = await browserFetchPage(page, searchUrl);
+    const listings = parseListings(html);
+    console.log(`[scraper] Page 1: ${listings.length} listings for ${searchUrl}`);
+    return listings;
+  } catch (err) {
+    console.error(`[scraper] Failed to scrape ${searchUrl}:`, err);
+    return [];
+  } finally {
+    await browser.close();
+  }
 }
 
 /** Scrape ALL pages with headless browser — used by seed mode locally */
