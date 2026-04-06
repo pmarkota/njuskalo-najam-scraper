@@ -116,21 +116,29 @@ function addPageParam(baseUrl: string, pageNum: number): string {
   return url.toString();
 }
 
-/** Scrape page 1 only — used by normal cron runs */
-export async function scrapeListings(searchUrl: string): Promise<Listing[]> {
+/** Scrape page 1 for multiple URLs using a single browser — used by cron */
+export async function scrapeMultipleTargets(
+  urls: string[]
+): Promise<Map<string, Listing[]>> {
+  const results = new Map<string, Listing[]>();
   const browser = await launchBrowser();
   try {
     const page = await setupPage(browser);
-    const { html } = await fetchPageHtml(page, searchUrl);
-    const listings = parseListings(html);
-    console.log(`[scraper] Page 1: ${listings.length} listings`);
-    return listings;
-  } catch (err) {
-    console.error(`[scraper] Failed to scrape ${searchUrl}:`, err);
-    return [];
+    for (const url of urls) {
+      try {
+        const { html } = await fetchPageHtml(page, url);
+        const listings = parseListings(html);
+        console.log(`[scraper] Page 1: ${listings.length} listings for ${url}`);
+        results.set(url, listings);
+      } catch (err) {
+        console.error(`[scraper] Failed to scrape ${url}:`, err);
+        results.set(url, []);
+      }
+    }
   } finally {
     await browser.close();
   }
+  return results;
 }
 
 /** Scrape ALL pages — used by seed mode locally (no timeout) */
