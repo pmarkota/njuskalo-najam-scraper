@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { SCRAPE_TARGETS } from "@/config/targets";
 import { supabase } from "@/lib/supabase";
-import { scrapeMultipleTargets, scrapeAllPages } from "@/lib/scraper";
+import { scrapeFast, scrapeAllPages } from "@/lib/scraper";
 import { sendDiscordNotification } from "@/lib/discord";
 
 export const maxDuration = 60;
@@ -15,103 +15,67 @@ export async function GET(request: NextRequest) {
   const seedMode = request.nextUrl.searchParams.get("seed") === "true";
   const results = [];
 
-  if (seedMode) {
-    // Seed mode: scrape all pages per target (run locally, no Vercel timeout)
-    for (const target of SCRAPE_TARGETS) {
-      try {
-        const listings = await scrapeAllPages(target.njuskaloUrl);
-        if (listings.length > 0) {
-          await supabase
-            .from("seen_listings")
-            .upsert(
-              listings.map((l) => ({
-                id: l.id,
-                title: l.title,
-                price: l.price,
-                location: l.location,
-                url: l.url,
-                image_url: l.image_url,
-                size: l.size,
-                target: target.slug,
-              })),
-              { onConflict: "id", ignoreDuplicates: true }
-            );
-        }
-        results.push({
-          target: target.name,
-          found: listings.length,
-          new: listings.length,
-          seeded: true,
-        });
-      } catch (error) {
-        console.error(`[scrape] Seed error for ${target.name}:`, error);
-        results.push({ target: target.name, error: String(error) });
+  for (const target of SCRAPE_TARGETS) {
+    try {
+      // Seed: headless browser, all pages (local only).
+      // Cron: fast fetch(), page 1 only. Returns [] if blocked — retries next cycle.
+      const listings = seedMode
+        ? await scrapeAllPages(target.njuskaloUrl)
+        : await scrapeFast(target.njuskaloUrl);
+
+      if (listings.length === 0) {
+        results.push({ target: target.name, found: 0, new: 0 });
+        continue;
       }
-    }
-  } else {
-    // Normal mode: one browser, page 1 for all targets
-    const urls = SCRAPE_TARGETS.map((t) => t.njuskaloUrl);
-    const scraped = await scrapeMultipleTargets(urls);
 
-    for (const target of SCRAPE_TARGETS) {
-      try {
-        const listings = scraped.get(target.njuskaloUrl) || [];
+      const listingIds = listings.map((l) => l.id);
+      const { data: existing } = await supabase
+        .from("seen_listings")
+        .select("id")
+        .in("id", listingIds);
 
-        if (listings.length === 0) {
-          results.push({ target: target.name, found: 0, new: 0 });
-          continue;
-        }
+      const existingIds = new Set((existing || []).map((e) => e.id));
+      const newListings = listings.filter((l) => !existingIds.has(l.id));
 
-        const listingIds = listings.map((l) => l.id);
-        const { data: existing } = await supabase
-          .from("seen_listings")
-          .select("id")
-          .in("id", listingIds);
+      if (newListings.length === 0) {
+        results.push({ target: target.name, found: listings.length, new: 0 });
+        continue;
+      }
 
-        const existingIds = new Set((existing || []).map((e) => e.id));
-        const newListings = listings.filter((l) => !existingIds.has(l.id));
+      await supabase
+        .from("seen_listings")
+        .upsert(
+          newListings.map((l) => ({
+            id: l.id,
+            title: l.title,
+            price: l.price,
+            location: l.location,
+            url: l.url,
+            image_url: l.image_url,
+            size: l.size,
+            target: target.slug,
+          })),
+          { onConflict: "id", ignoreDuplicates: true }
+        );
 
-        if (newListings.length === 0) {
-          results.push({
-            target: target.name,
-            found: listings.length,
-            new: 0,
-          });
-          continue;
-        }
-
-        await supabase
-          .from("seen_listings")
-          .upsert(
-            newListings.map((l) => ({
-              id: l.id,
-              title: l.title,
-              price: l.price,
-              location: l.location,
-              url: l.url,
-              image_url: l.image_url,
-              size: l.size,
-              target: target.slug,
-            })),
-            { onConflict: "id", ignoreDuplicates: true }
-          );
-
+      if (!seedMode) {
         for (const listing of newListings) {
           await sendDiscordNotification(target.discordWebhookUrl, {
             ...listing,
             target: target.name,
           });
         }
-
-        results.push({
-          target: target.name,
-          found: listings.length,
-          new: newListings.length,
-        });
-      } catch (error) {
-        console.error(`[scrape] Error for ${target.name}:`, error);
-        results.push({ target: target.name, error: String(error) });
       }
+
+      results.push({
+        target: target.name,
+        found: listings.length,
+        new: newListings.length,
+        seeded: seedMode || undefined,
+      });
+    } catch (error) {
+      console.error(`[scrape] Error for ${target.name}:`, error);
+      results.push({ target: target.name, error: String(error) });
     }
   }
 

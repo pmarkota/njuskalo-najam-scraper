@@ -12,60 +12,12 @@ export interface Listing {
   size: string;
 }
 
-// Remote chromium pack for Vercel (must match @sparticuz/chromium-min version)
-const CHROMIUM_PACK_URL =
-  "https://github.com/Sparticuz/chromium/releases/download/v143.0.4/chromium-v143.0.4-pack.x64.tar";
-
-async function launchBrowser(): Promise<Browser> {
-  const isLocal = !process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.VERCEL;
-
-  return puppeteer.launch({
-    args: isLocal ? [] : chromium.args,
-    executablePath: isLocal
-      ? process.platform === "darwin"
-        ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        : process.platform === "win32"
-          ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-          : "/usr/bin/google-chrome"
-      : await chromium.executablePath(CHROMIUM_PACK_URL),
-    headless: true,
-  });
-}
-
-async function setupPage(browser: Browser): Promise<Page> {
-  const page = await browser.newPage();
-  await page.setUserAgent(
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-  );
-  await page.setExtraHTTPHeaders({
-    "Accept-Language": "hr-HR,hr;q=0.9,en;q=0.8",
-  });
-  return page;
-}
-
-async function fetchPageHtml(
-  page: Page,
-  url: string
-): Promise<{ html: string; finalUrl: string }> {
-  console.log(`[scraper] Navigating to ${url}`);
-  await page.goto(url, { waitUntil: "networkidle0", timeout: 30000 });
-
-  await page
-    .waitForSelector("li.EntityList-item", { timeout: 15000 })
-    .catch(() => {
-      console.warn(`[scraper] Timeout waiting for EntityList-item selector`);
-    });
-
-  const finalUrl = page.url();
-  const html = await page.content();
-  console.log(`[scraper] Got ${html.length} chars of HTML from ${finalUrl}`);
-  return { html, finalUrl };
-}
+// --- Cheerio parsing (shared by both fetch and browser approaches) ---
 
 function parseListings(html: string): Listing[] {
   if (!html.includes("EntityList-item")) {
     console.error(
-      `[scraper] No EntityList-item in HTML (length: ${html.length}). Possible block.`
+      `[scraper] No EntityList-item in HTML (length: ${html.length}). Blocked or empty page.`
     );
     return [];
   }
@@ -110,38 +62,105 @@ function parseListings(html: string): Listing[] {
   return listings;
 }
 
+// --- Fast fetch() approach (used by cron on Vercel) ---
+
+const USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+];
+
+/** Scrape page 1 via fetch() — fast, used by cron. Returns [] if blocked. */
+export async function scrapeFast(searchUrl: string): Promise<Listing[]> {
+  const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+
+  const response = await fetch(searchUrl, {
+    headers: {
+      "User-Agent": ua,
+      "Accept-Language": "hr-HR,hr;q=0.9,en;q=0.8",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+    redirect: "follow",
+  });
+
+  if (!response.ok) {
+    console.error(`[scraper] HTTP ${response.status} for ${searchUrl}`);
+    return [];
+  }
+
+  // Bot protection redirects to perfdrive — just return empty, try again next cycle
+  if (response.url.includes("validate.perfdrive.com")) {
+    console.warn(`[scraper] Bot protection hit for ${searchUrl} — skipping this cycle`);
+    return [];
+  }
+
+  const html = await response.text();
+  const listings = parseListings(html);
+  console.log(`[scraper] Fast scrape: ${listings.length} listings from ${searchUrl}`);
+  return listings;
+}
+
+// --- Headless browser approach (used by local seed mode only) ---
+
+const CHROMIUM_PACK_URL =
+  "https://github.com/Sparticuz/chromium/releases/download/v143.0.4/chromium-v143.0.4-pack.x64.tar";
+
+async function launchBrowser(): Promise<Browser> {
+  const isLocal = !process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.VERCEL;
+
+  return puppeteer.launch({
+    args: isLocal ? [] : chromium.args,
+    executablePath: isLocal
+      ? process.platform === "darwin"
+        ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        : process.platform === "win32"
+          ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+          : "/usr/bin/google-chrome"
+      : await chromium.executablePath(CHROMIUM_PACK_URL),
+    headless: true,
+  });
+}
+
+async function setupPage(browser: Browser): Promise<Page> {
+  const page = await browser.newPage();
+  await page.setUserAgent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+  );
+  await page.setExtraHTTPHeaders({
+    "Accept-Language": "hr-HR,hr;q=0.9,en;q=0.8",
+  });
+  return page;
+}
+
+async function browserFetchPage(
+  page: Page,
+  url: string
+): Promise<{ html: string; finalUrl: string }> {
+  console.log(`[scraper] Navigating to ${url}`);
+  await page.goto(url, { waitUntil: "networkidle0", timeout: 30000 });
+
+  await page
+    .waitForSelector("li.EntityList-item", { timeout: 15000 })
+    .catch(() => {
+      console.warn(`[scraper] Timeout waiting for EntityList-item selector`);
+    });
+
+  const finalUrl = page.url();
+  const html = await page.content();
+  console.log(`[scraper] Got ${html.length} chars of HTML from ${finalUrl}`);
+  return { html, finalUrl };
+}
+
 function addPageParam(baseUrl: string, pageNum: number): string {
   const url = new URL(baseUrl);
   url.searchParams.set("page", String(pageNum));
   return url.toString();
 }
 
-/** Scrape page 1 for multiple URLs using a single browser — used by cron */
-export async function scrapeMultipleTargets(
-  urls: string[]
-): Promise<Map<string, Listing[]>> {
-  const results = new Map<string, Listing[]>();
-  const browser = await launchBrowser();
-  try {
-    const page = await setupPage(browser);
-    for (const url of urls) {
-      try {
-        const { html } = await fetchPageHtml(page, url);
-        const listings = parseListings(html);
-        console.log(`[scraper] Page 1: ${listings.length} listings for ${url}`);
-        results.set(url, listings);
-      } catch (err) {
-        console.error(`[scraper] Failed to scrape ${url}:`, err);
-        results.set(url, []);
-      }
-    }
-  } finally {
-    await browser.close();
-  }
-  return results;
-}
-
-/** Scrape ALL pages — used by seed mode locally (no timeout) */
+/** Scrape ALL pages with headless browser — used by seed mode locally */
 export async function scrapeAllPages(searchUrl: string): Promise<Listing[]> {
   const browser = await launchBrowser();
   try {
@@ -151,19 +170,16 @@ export async function scrapeAllPages(searchUrl: string): Promise<Listing[]> {
 
     while (true) {
       const url = pageNum === 1 ? searchUrl : addPageParam(searchUrl, pageNum);
-      const { html, finalUrl } = await fetchPageHtml(page, url);
+      const { html, finalUrl } = await browserFetchPage(page, url);
 
-      // Njuškalo redirects to page 1 when you request a page beyond the last.
-      // Detect this: if we asked for page N>1 but the final URL has no "page=" param, stop.
       if (pageNum > 1 && !finalUrl.includes(`page=${pageNum}`)) {
         console.log(
-          `[scraper] Page ${pageNum} redirected to ${finalUrl} — reached end of listings`
+          `[scraper] Page ${pageNum} redirected to ${finalUrl} — reached end`
         );
         break;
       }
 
       const listings = parseListings(html);
-
       console.log(
         `[scraper] Page ${pageNum}: ${listings.length} listings (total: ${allListings.length + listings.length})`
       );
