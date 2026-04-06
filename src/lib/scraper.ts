@@ -12,9 +12,9 @@ export interface Listing {
   size: string;
 }
 
-// Remote chromium pack for Vercel (matched to @sparticuz/chromium-min version)
+// Remote chromium pack for Vercel (must match @sparticuz/chromium-min version)
 const CHROMIUM_PACK_URL =
-  "https://github.com/nicholasgasior/chromium-brotli/releases/download/v131.0.0/chromium-v131.0.0-pack.tar";
+  "https://github.com/Sparticuz/chromium/releases/download/v143.0.4/chromium-v143.0.4-pack.x64.tar";
 
 async function launchBrowser(): Promise<Browser> {
   const isLocal = !process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.VERCEL;
