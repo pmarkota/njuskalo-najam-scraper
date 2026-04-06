@@ -1,6 +1,11 @@
 import * as cheerio from "cheerio";
-import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import puppeteerCore, { type Browser, type Page } from "puppeteer-core";
+import { addExtra } from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import chromium from "@sparticuz/chromium-min";
+
+const puppeteer = addExtra(puppeteerCore);
+puppeteer.use(StealthPlugin());
 
 export interface Listing {
   id: string;
