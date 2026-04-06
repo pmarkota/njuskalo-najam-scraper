@@ -1,65 +1,99 @@
-import Image from "next/image";
+import { supabase } from "@/lib/supabase";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const { data: listings, error } = await supabase
+    .from("seen_listings")
+    .select("*")
+    .order("first_seen_at", { ascending: false })
+    .limit(20);
+
+  const { data: counts } = await supabase
+    .from("seen_listings")
+    .select("target", { count: "exact", head: false });
+
+  const targetCounts: Record<string, number> = {};
+  if (counts) {
+    for (const row of counts) {
+      targetCounts[row.target] = (targetCounts[row.target] || 0) + 1;
+    }
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-[family-name:var(--font-geist-sans)]">
+      <div className="max-w-5xl mx-auto px-6 py-12">
+        <h1 className="text-2xl font-semibold mb-2">Njuskalo Scraper</h1>
+        <p className="text-zinc-400 mb-8">
+          Tracking apartment rentals. Total seen:{" "}
+          {Object.values(targetCounts).reduce((a, b) => a + b, 0)} listings
+          {Object.entries(targetCounts).map(([target, count]) => (
+            <span key={target} className="ml-3 text-zinc-500">
+              {target}: {count}
+            </span>
+          ))}
+        </p>
+
+        {error && (
+          <p className="text-red-400 mb-4">
+            Error loading listings: {error.message}
           </p>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="text-zinc-400 border-b border-zinc-800">
+              <tr>
+                <th className="pb-3 pr-4 font-medium">Title</th>
+                <th className="pb-3 pr-4 font-medium">Price</th>
+                <th className="pb-3 pr-4 font-medium">Location</th>
+                <th className="pb-3 pr-4 font-medium">Size</th>
+                <th className="pb-3 pr-4 font-medium">Target</th>
+                <th className="pb-3 font-medium">Seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {listings?.map((listing) => (
+                <tr
+                  key={listing.id}
+                  className="border-b border-zinc-800/50 hover:bg-zinc-900/50"
+                >
+                  <td className="py-3 pr-4 max-w-xs">
+                    <a
+                      href={listing.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-zinc-200 hover:text-white underline-offset-2 hover:underline"
+                    >
+                      {listing.title || listing.id}
+                    </a>
+                  </td>
+                  <td className="py-3 pr-4 whitespace-nowrap text-emerald-400">
+                    {listing.price || "N/A"}
+                  </td>
+                  <td className="py-3 pr-4 text-zinc-400">
+                    {listing.location || "-"}
+                  </td>
+                  <td className="py-3 pr-4 text-zinc-400 whitespace-nowrap">
+                    {listing.size || "-"}
+                  </td>
+                  <td className="py-3 pr-4 text-zinc-500">{listing.target}</td>
+                  <td className="py-3 text-zinc-500 whitespace-nowrap">
+                    {new Date(listing.first_seen_at).toLocaleDateString("hr-HR")}
+                  </td>
+                </tr>
+              ))}
+              {(!listings || listings.length === 0) && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-zinc-500">
+                    No listings yet. Run the scraper to populate.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </div>
     </div>
   );
 }
