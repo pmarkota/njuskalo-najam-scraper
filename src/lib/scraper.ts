@@ -43,7 +43,10 @@ async function setupPage(browser: Browser): Promise<Page> {
   return page;
 }
 
-async function fetchPageHtml(page: Page, url: string): Promise<string> {
+async function fetchPageHtml(
+  page: Page,
+  url: string
+): Promise<{ html: string; finalUrl: string }> {
   console.log(`[scraper] Navigating to ${url}`);
   await page.goto(url, { waitUntil: "networkidle0", timeout: 30000 });
 
@@ -53,9 +56,10 @@ async function fetchPageHtml(page: Page, url: string): Promise<string> {
       console.warn(`[scraper] Timeout waiting for EntityList-item selector`);
     });
 
+  const finalUrl = page.url();
   const html = await page.content();
-  console.log(`[scraper] Got ${html.length} chars of HTML from ${page.url()}`);
-  return html;
+  console.log(`[scraper] Got ${html.length} chars of HTML from ${finalUrl}`);
+  return { html, finalUrl };
 }
 
 function parseListings(html: string): Listing[] {
@@ -117,7 +121,7 @@ export async function scrapeListings(searchUrl: string): Promise<Listing[]> {
   const browser = await launchBrowser();
   try {
     const page = await setupPage(browser);
-    const html = await fetchPageHtml(page, searchUrl);
+    const { html } = await fetchPageHtml(page, searchUrl);
     const listings = parseListings(html);
     console.log(`[scraper] Page 1: ${listings.length} listings`);
     return listings;
@@ -139,7 +143,17 @@ export async function scrapeAllPages(searchUrl: string): Promise<Listing[]> {
 
     while (true) {
       const url = pageNum === 1 ? searchUrl : addPageParam(searchUrl, pageNum);
-      const html = await fetchPageHtml(page, url);
+      const { html, finalUrl } = await fetchPageHtml(page, url);
+
+      // Njuškalo redirects to page 1 when you request a page beyond the last.
+      // Detect this: if we asked for page N>1 but the final URL has no "page=" param, stop.
+      if (pageNum > 1 && !finalUrl.includes(`page=${pageNum}`)) {
+        console.log(
+          `[scraper] Page ${pageNum} redirected to ${finalUrl} — reached end of listings`
+        );
+        break;
+      }
+
       const listings = parseListings(html);
 
       console.log(
