@@ -1,11 +1,6 @@
 import * as cheerio from "cheerio";
-import puppeteerCore, { type Browser, type Page } from "puppeteer-core";
-import { addExtra } from "puppeteer-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import chromium from "@sparticuz/chromium-min";
-
-const puppeteer = addExtra(puppeteerCore);
-puppeteer.use(StealthPlugin());
 
 export interface Listing {
   id: string;
@@ -96,6 +91,45 @@ async function setupPage(browser: Browser): Promise<Page> {
   await page.setExtraHTTPHeaders({
     "Accept-Language": "hr-HR,hr;q=0.9,en;q=0.8",
   });
+
+  // Manual stealth patches — hide headless browser signals
+  await page.evaluateOnNewDocument(() => {
+    // Hide webdriver flag
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+
+    // Fake plugins array
+    Object.defineProperty(navigator, "plugins", {
+      get: () => [
+        { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer" },
+        { name: "Chrome PDF Viewer", filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai" },
+        { name: "Native Client", filename: "internal-nacl-plugin" },
+      ],
+    });
+
+    // Fake languages
+    Object.defineProperty(navigator, "languages", {
+      get: () => ["hr-HR", "hr", "en-US", "en"],
+    });
+
+    // Fix chrome runtime
+    (window as any).chrome = {
+      runtime: { connect: () => {}, sendMessage: () => {} },
+    };
+
+    // Fix permissions query
+    const originalQuery = window.navigator.permissions.query.bind(
+      window.navigator.permissions
+    );
+    window.navigator.permissions.query = (parameters: any) => {
+      if (parameters.name === "notifications") {
+        return Promise.resolve({
+          state: Notification.permission,
+        } as PermissionStatus);
+      }
+      return originalQuery(parameters);
+    };
+  });
+
   return page;
 }
 
