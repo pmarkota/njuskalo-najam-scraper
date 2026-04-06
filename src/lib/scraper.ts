@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
+import chromium from "@sparticuz/chromium-min";
 
 export interface Listing {
   id: string;
@@ -11,6 +11,10 @@ export interface Listing {
   image_url: string;
   size: string;
 }
+
+// Remote chromium pack for Vercel (matched to @sparticuz/chromium-min version)
+const CHROMIUM_PACK_URL =
+  "https://github.com/nicholasgasior/chromium-brotli/releases/download/v131.0.0/chromium-v131.0.0-pack.tar";
 
 async function launchBrowser(): Promise<Browser> {
   const isLocal = !process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.VERCEL;
@@ -23,7 +27,7 @@ async function launchBrowser(): Promise<Browser> {
         : process.platform === "win32"
           ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
           : "/usr/bin/google-chrome"
-      : await chromium.executablePath(),
+      : await chromium.executablePath(CHROMIUM_PACK_URL),
     headless: true,
   });
 }
