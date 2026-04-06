@@ -8,7 +8,7 @@ export const scrapeNjuskalo = inngest.createFunction(
   {
     id: "scrape-njuskalo",
     retries: 1,
-    triggers: [{ cron: "* * * * *" }],
+    triggers: [{ cron: "*/5 * * * *" }],
   },
   async ({ step }) => {
     const results = [];
