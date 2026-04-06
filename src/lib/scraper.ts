@@ -129,51 +129,38 @@ export async function scrapeListings(searchUrl: string): Promise<Listing[]> {
   }
 }
 
-/** Scrape a batch of pages — used by seed mode (2 pages per call to fit Vercel timeout) */
-export async function scrapePageBatch(
-  searchUrl: string,
-  fromPage: number,
-  batchSize = 2
-): Promise<{ listings: Listing[]; lastPage: number; hasMore: boolean }> {
+/** Scrape ALL pages — used by seed mode locally (no timeout) */
+export async function scrapeAllPages(searchUrl: string): Promise<Listing[]> {
   const browser = await launchBrowser();
   try {
     const page = await setupPage(browser);
     const allListings: Listing[] = [];
-    let hasMore = true;
+    let pageNum = 1;
 
-    for (let i = 0; i < batchSize; i++) {
-      const pageNum = fromPage + i;
-      const url =
-        pageNum === 1 ? searchUrl : addPageParam(searchUrl, pageNum);
+    while (true) {
+      const url = pageNum === 1 ? searchUrl : addPageParam(searchUrl, pageNum);
       const html = await fetchPageHtml(page, url);
       const listings = parseListings(html);
 
       console.log(
-        `[scraper] Page ${pageNum}: ${listings.length} listings`
+        `[scraper] Page ${pageNum}: ${listings.length} listings (total: ${allListings.length + listings.length})`
       );
 
-      if (listings.length === 0) {
-        hasMore = false;
-        break;
-      }
+      if (listings.length === 0) break;
 
       allListings.push(...listings);
+      pageNum++;
 
-      // Small delay between pages
-      if (i < batchSize - 1) {
-        await new Promise((r) => setTimeout(r, 1500));
-      }
+      await new Promise((r) => setTimeout(r, 2000));
     }
 
-    const lastPage = fromPage + Math.max(0, allListings.length > 0 ? Math.min(batchSize, batchSize) - 1 : 0);
-    return {
-      listings: allListings,
-      lastPage: fromPage + batchSize - 1,
-      hasMore: hasMore && allListings.length > 0,
-    };
+    console.log(
+      `[scraper] Seed complete: ${allListings.length} listings across ${pageNum - 1} pages`
+    );
+    return allListings;
   } catch (err) {
-    console.error(`[scraper] Failed to scrape batch from page ${fromPage}:`, err);
-    return { listings: [], lastPage: fromPage, hasMore: false };
+    console.error(`[scraper] Failed to scrape all pages:`, err);
+    return [];
   } finally {
     await browser.close();
   }
